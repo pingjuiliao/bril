@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 
 import argparse
+import itertools
 import json
 import sys
-
-import tdce
 
 class Numbering:
     def __init__(self, n, s):
@@ -97,8 +96,22 @@ def lvn(block):
         del instr['numbering']
 
     ## Step 3: trivial dead code elimination (in-place)
-    tdce.tdce(block)
-    tdce.local_drop_kill_dce(block)
+    converged = False
+    used = set()
+    while not converged:
+        converged = True
+
+        for instr in block:
+            if instr['op'] == 'id':
+                continue
+            if 'args' in instr:
+                for arg in instr['args']:
+                    used.add(arg)
+
+        for instr in block:
+            if 'dest' in instr and instr['dest'] not in used:
+                block.remove(instr)
+                converged = False
 
 def form_blocks(instrs):
     TERMINATORS = 'br', 'jmp', 'ret'
@@ -123,9 +136,8 @@ def main():
     for func in bril['functions']:
         blocks = list(form_blocks(func['instrs']))
         for block in blocks:
-            #pass
             lvn(block)
-
+        func['instrs'] = list(itertools.chain(*blocks))
     json.dump(bril, sys.stdout, indent=2, sort_keys=True)
 
 if __name__ == '__main__':
