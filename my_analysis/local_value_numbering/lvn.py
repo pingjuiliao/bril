@@ -5,6 +5,8 @@ import itertools
 import json
 import sys
 
+DEBUG = False
+
 class Numbering:
     def __init__(self, n, s):
         self.number = n
@@ -19,6 +21,10 @@ def lvn_encode_value(instr, var_map):
         return (op, instr['value'])
     enc = (op,)
     for arg in sorted(instr['args']):
+        # global or undefined
+        if arg not in var_map:
+            enc += (arg,)
+            continue
         nbring = var_map[arg]
         while nbring.alias is not None:
             nbring = nbring.alias
@@ -33,7 +39,10 @@ def lvn_encode_value(instr, var_map):
 #    a: int = const 4;
 #    print a;
 
-def lvn(block):
+def local_value_numbering(block,
+                          perform_tdce=False,
+                          perform_const_folding=False):
+
     # First loop: get overwritten vars
     val2nbring = {}
     num2nbring = []
@@ -41,7 +50,7 @@ def lvn(block):
 
     ## step 1: construct numbering list & resolve conflicting variable(home) names
     for instr in block:
-        if 'op' not in instr:
+        if 'op' not in instr or instr['op'] == 'jmp':
             continue
         if 'dest' not in instr:
             value = lvn_encode_value(instr, home2nbring)
@@ -75,6 +84,14 @@ def lvn(block):
         # add to instr
         instr['numbering'] = nbring
 
+    ## step1 debug
+    if DEBUG:
+        for instr in block:
+            if 'numbering' not in instr:
+                continue
+            nbring = instr['numbering']
+            print(nbring.number, nbring.value, nbring.home)
+
     ## Step 2: reconstruct the program (in-place)
     ##    At this point, we haven't change the source code(instr) yet
     for instr in block:
@@ -90,12 +107,17 @@ def lvn(block):
             instr['value'] = nbring.value[1]
         else:
             new_args = []
-            for n in nbring.value[1:]:
-                new_args.append(num2nbring[n].home)
+            for new_arg in nbring.value[1:]:
+                if isinstance(new_arg, int): # local numbering
+                    new_args.append(num2nbring[new_arg].home)
+                else: # global or undefined, which is a string
+                    new_args.append(new_arg)
             instr['args'] = new_args
         del instr['numbering']
 
     ## Step 3: trivial dead code elimination (in-place)
+    if not perform_tdce:
+        return
     converged = False
     used = set()
     while not converged:
@@ -112,6 +134,7 @@ def lvn(block):
             if 'dest' in instr and instr['dest'] not in used:
                 block.remove(instr)
                 converged = False
+    return
 
 def form_blocks(instrs):
     TERMINATORS = 'br', 'jmp', 'ret'
@@ -132,12 +155,20 @@ def form_blocks(instrs):
 
 def main():
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-f', '--fold', action='store_true')
+    parser.add_argument('-t', '--tdce', action='store_true')
+    parser.add_argument('-p', '--lookup', action='store_true')
+    args = parser.parse_args()
+
     bril = json.load(sys.stdin)
     for func in bril['functions']:
         blocks = list(form_blocks(func['instrs']))
         for block in blocks:
-            lvn(block)
+            local_value_numbering(block, args.tdce, args.fold)
         func['instrs'] = list(itertools.chain(*blocks))
+    if DEBUG:
+        quit()
     json.dump(bril, sys.stdout, indent=2, sort_keys=True)
 
 if __name__ == '__main__':
