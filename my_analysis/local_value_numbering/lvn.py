@@ -13,6 +13,8 @@ class Numbering:
         self.home = s
         # value should be add after conflicting names
         self.value = None
+
+        ## The pointer defined by the 'id' operation
         self.alias = None
 
 def lvn_encode_value(instr, var_map):
@@ -31,6 +33,20 @@ def lvn_encode_value(instr, var_map):
         enc += (nbring.number,)
     return enc
 
+def propagation(num, num2nbring):
+    nbring = None
+    while isinstance(num, int):
+        op = num2nbring[num].value[0]
+        if op == 'const':
+            nbring = num2nbring[num]
+            break
+        elif op == 'id':
+            nbring = num2nbring[num]
+            num = nbring.value[1]
+        else:
+            break
+    return nbring
+
 # The algorithm requires at least 2 loops to complete since it need to
 # know whether the variable will be overwritten
 # e.g.
@@ -41,6 +57,7 @@ def lvn_encode_value(instr, var_map):
 
 def local_value_numbering(block,
                           perform_tdce=False,
+                          perform_id_propagation=False,
                           perform_const_folding=False):
 
     # First loop: get overwritten vars
@@ -74,24 +91,33 @@ def local_value_numbering(block,
         # Encode the value, and handle conflicts
         value = lvn_encode_value(instr, home2nbring)
         if value in val2nbring:
-            nbring.value = ("id", val2nbring[value].number)
-            nbring.alias = val2nbring[value]
+            reference = val2nbring[value]
+            nbring.value = ("id", reference.number)
+            nbring.alias = reference
         else:
             nbring.value = value
+
+        # only add to map if it's not in map
+        if value not in val2nbring:
             val2nbring[value] = nbring
         num2nbring.append(nbring)
 
         # add to instr
         instr['numbering'] = nbring
 
-    ## step1 debug
+    ## Debug
     if DEBUG:
+        print("DEBUG mode")
         for instr in block:
             if 'numbering' not in instr:
                 continue
             nbring = instr['numbering']
-            print(nbring.number, nbring.value, nbring.home)
-
+            alias = nbring.alias
+            if alias is None:
+                print(nbring.number, nbring.value, nbring.home)
+            else:
+                print(nbring.number, nbring.value, nbring.home, "-> (",
+                      alias.number, alias.value, alias.home, ")")
     ## Step 2: reconstruct the program (in-place)
     ##    At this point, we haven't change the source code(instr) yet
     for instr in block:
@@ -103,15 +129,32 @@ def local_value_numbering(block,
             instr['dest'] = nbring.home
         instr['op'] = nbring.value[0]
 
-        if instr['op'] == 'const':
+        if nbring.value[0] == 'const':
             instr['value'] = nbring.value[1]
+        elif perform_id_propagation:
+            new_args = []
+            for arg in nbring.value[1:]:
+                nbring = propagation(arg, num2nbring)
+                if nbring is not None:
+                    if instr['op'] == 'id' and nbring.value[0] == 'const':
+                        instr['op'] = nbring.value[0]
+                        instr['value'] = nbring.value[1]
+                    elif nbring.value[0] == 'id':
+                        new_args.append(nbring.value[1])
+                    else:
+                        new_args.append(nbring.home)
+                else:
+                    new_args.append(arg)
+
+            if instr['op'] != 'const':
+                instr['args'] = new_args
         else:
             new_args = []
-            for new_arg in nbring.value[1:]:
-                if isinstance(new_arg, int): # local numbering
-                    new_args.append(num2nbring[new_arg].home)
+            for arg in nbring.value[1:]:
+                if isinstance(arg, int): # local numbering
+                    new_args.append(num2nbring[arg].home)
                 else: # global or undefined, which is a string
-                    new_args.append(new_arg)
+                    new_args.append(arg)
             instr['args'] = new_args
         del instr['numbering']
 
@@ -158,14 +201,14 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('-f', '--fold', action='store_true')
     parser.add_argument('-t', '--tdce', action='store_true')
-    parser.add_argument('-p', '--lookup', action='store_true')
+    parser.add_argument('-p', '--propagate', action='store_true')
     args = parser.parse_args()
 
     bril = json.load(sys.stdin)
     for func in bril['functions']:
         blocks = list(form_blocks(func['instrs']))
         for block in blocks:
-            local_value_numbering(block, args.tdce, args.fold)
+            local_value_numbering(block, args.tdce, args.propagate, args.fold)
         func['instrs'] = list(itertools.chain(*blocks))
     if DEBUG:
         quit()

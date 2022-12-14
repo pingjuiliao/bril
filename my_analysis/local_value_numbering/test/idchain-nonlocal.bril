@@ -1,3 +1,4 @@
+# ARGS: -p
 @main {
   x: int = const 4;
   jmp .label;
