@@ -10,19 +10,24 @@ DEBUG = False
 class Numbering:
     def __init__(self, n, s):
         self.number = n
-        self.home = s
-        # value should be add after conflicting names
         self.value = None
+        self.home = s
 
-        ## The pointer defined by the 'id' operation
+        # The pointer defined by the 'id' operation
+        #  only assign alias for duplicated value
+        #  which does not include the original 'id xxx' case
         self.alias = None
 
+ORDER_DEPENDENT_OP = ['lt', 'le', 'gt', 'ge']
 def lvn_encode_value(instr, var_map):
     op = instr['op']
     if 'value' in instr:
         return (op, instr['value'])
     enc = (op,)
-    for arg in sorted(instr['args']):
+    args = instr['args']
+    if op not in ORDER_DEPENDENT_OP:
+        args = sorted(instr['args'])
+    for arg in args:
         # global or undefined
         if arg not in var_map:
             enc += (arg,)
@@ -32,6 +37,43 @@ def lvn_encode_value(instr, var_map):
             nbring = nbring.alias
         enc += (nbring.number,)
     return enc
+
+UNARY_OP = {'not': 'not'}
+BINARY_OP = {'add': '+',
+             'sub': '-',
+             'mul': '*',
+             'div': '/',
+             'and': 'and',
+             'or': 'or',
+             'xor': '^',
+             'eq': '==',
+             'le': '<=',
+             'ge': '>=',
+             'lt': '<',
+             'gt': '>'}
+
+def bril_eval(value, num2const, num2nbring):
+    if not value:
+        return None
+    if value[0] == 'id' and isinstance(value[1], int):
+        return bril_eval(num2nbring[value[1]].value, num2const, num2nbring)
+    elif value[0] in UNARY_OP and len(value) == 2:
+        if value[1] not in num2const:
+            return None
+        return eval(' '.join([UNARY_OP[value[0]], str(num2const[value[1]])]))
+    elif value[0] in BINARY_OP and len(value) == 3:
+        v0 = num2const[value[1]] if value[1] in num2const else None
+        v1 = num2const[value[2]] if value[2] in num2const else None
+        if value[0] == 'or' and (v0 == True or v1 == True):
+            return True
+        elif value[0] == 'and' and (v0 == False or v1 == False):
+            return False
+        elif value[0] in ['eq', 'le', 'ge'] and value[1] == value[2]:
+            return True
+        elif v0 == None or v1 == None:
+            return None
+        return eval(' '.join([str(v0), BINARY_OP[value[0]], str(v1)]))
+    return None
 
 def propagation(num, num2nbring):
     nbring = None
@@ -57,8 +99,8 @@ def propagation(num, num2nbring):
 
 def local_value_numbering(block,
                           perform_tdce=False,
-                          perform_id_propagation=False,
-                          perform_const_folding=False):
+                          perform_propagation=False,
+                          perform_constant_folding=False):
 
     # First loop: get overwritten vars
     val2nbring = {}
@@ -118,8 +160,10 @@ def local_value_numbering(block,
             else:
                 print(nbring.number, nbring.value, nbring.home, "-> (",
                       alias.number, alias.value, alias.home, ")")
+
     ## Step 2: reconstruct the program (in-place)
     ##    At this point, we haven't change the source code(instr) yet
+    num2const = {} # for constant folding
     for instr in block:
         if 'numbering' not in instr:
             continue
@@ -129,9 +173,18 @@ def local_value_numbering(block,
             instr['dest'] = nbring.home
         instr['op'] = nbring.value[0]
 
+
         if nbring.value[0] == 'const':
             instr['value'] = nbring.value[1]
-        elif perform_id_propagation:
+            num2const[nbring.number] = nbring.value[1]
+        elif perform_constant_folding and\
+             bril_eval(nbring.value, num2const, num2nbring) is not None:
+            instr['op'] = 'const'
+            v = bril_eval(nbring.value, num2const, num2nbring)
+            instr['value'] = v
+            num2const[nbring.number] = v
+            instr['args'] = []
+        elif perform_propagation:
             new_args = []
             for arg in nbring.value[1:]:
                 nbring = propagation(arg, num2nbring)
@@ -199,9 +252,10 @@ def form_blocks(instrs):
 def main():
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-f', '--fold', action='store_true')
     parser.add_argument('-t', '--tdce', action='store_true')
-    parser.add_argument('-p', '--propagate', action='store_true')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-f', '--fold', action='store_true')
+    group.add_argument('-p', '--propagate', action='store_true')
     args = parser.parse_args()
 
     bril = json.load(sys.stdin)
