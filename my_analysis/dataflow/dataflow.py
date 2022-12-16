@@ -5,6 +5,7 @@ import sys
 
 from dataflow_abstract import DataflowAnalysis
 from live_variable_analysis import LiveVariableAnalysis
+from constant_propagation_analysis import ConstantPropagationAnalysis
 from reaching_definition_analysis import ReachingDefinitionAnalysis
 
 def set_format(data):
@@ -27,6 +28,8 @@ def get_analysis(arg_string: str) -> DataflowAnalysis:
         analysis = ReachingDefinitionAnalysis()
     elif arg_string == 'live':
         analysis = LiveVariableAnalysis()
+    elif arg_string == 'cprop':
+        analysis = ConstantPropagationAnalysis()
     return analysis
 
 def main():

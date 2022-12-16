@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from dataflow_abstract import DataflowAnalysis
+
 class ReachingDefinitionAnalysis(DataflowAnalysis):
     """
     This implementation does not distinguish assignment over the same variable.
@@ -30,9 +31,10 @@ class ReachingDefinitionAnalysis(DataflowAnalysis):
 
     def transfer(self, flow_in, block):
         block = block if self.is_forward() else block[::-1]
+        flow_out = flow_in # no need to flow_in.copy()
         for instr in block:
-            flow_in = self.gen(instr) | (flow_in - self.kill(instr))
-        return flow_in
+            flow_out = self.gen(instr) | (flow_out - self.kill(instr))
+        return flow_out
 
 
 if __name__ == '__main__':

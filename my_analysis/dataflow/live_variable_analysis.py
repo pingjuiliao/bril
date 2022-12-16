@@ -32,6 +32,7 @@ class LiveVariableAnalysis(DataflowAnalysis):
 
     def transfer(self, flow_in, block):
         block = block if self.is_forward() else block[::-1]
+        flow_out = flow_in # no need to flow_in.copy because assignemnt
         for instr in block:
-            flow_in = self.gen(instr) | (flow_in - self.kill(instr))
-        return flow_in
+            flow_out = self.gen(instr) | (flow_out - self.kill(instr))
+        return flow_out
