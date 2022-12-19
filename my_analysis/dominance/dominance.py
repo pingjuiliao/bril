@@ -69,29 +69,62 @@ def form_cfg(blocks, labels):
 
     return succs, preds
 
-def hello(a, b, c):
-    print('hello')
+def dom_frontier(preds, dominator):
+    frontier = {block: set() for block in preds.keys()}
+    for block in preds.keys():
+        candidates = [dominator[pred] for pred in preds[block]]
+        candidates = set(itertools.chain.from_iterable(candidates))
+        strict_dominator = set(dominator[block]) - set([block])
+        for node in (candidates - strict_dominator):
+            frontier[node].add(block)
+
+    # It's a {A => [B0, B1, ...]} mapping where A's dominance frontiers
+    # which is difference from the dominated-by mapping
+    frontier = {k: list(v) for k, v in frontier.items()}
+    return frontier
+
+def immediate_dominance(dominators):
+    dominatees = {block: set() for block in dominators.keys()}
+    for domee, domers in dominators.items():
+        for domer in domers:
+            dominatees[domer].add(domee)
+
+    immediate_dominance = dominatees.copy()
+    for domer, domees in immediate_dominance.items():
+        curr_immediate = domees.copy()
+        for domee in (domees - set([domer])):
+            other_domers = set(dominators[domee]) - set([domer, domee])
+            for other_domer in other_domers:
+                if other_domer not in curr_immediate:
+                    continue
+                if domer in dominators[other_domer]:
+                    curr_immediate.remove(domee)
+                    break
+        curr_immediate -= set([domer])
+        immediate_dominance[domer] = sorted(list(curr_immediate))
+    return immediate_dominance
 
 def dom_algorithm(succs, preds, block_map):
 
     blocks = list(succs.keys()) # just block labels
-    dominance = {block: set(blocks) for block in blocks}
+    dominator = {block: set(blocks) for block in blocks}
 
     dom_changed = True
     while dom_changed:
         dom_changed = False
         for block in blocks:
-            pred_doms = [dominance[pred] for pred in preds[block]]
+            pred_doms = [dominator[pred] for pred in preds[block]]
             common = set.intersection(*pred_doms) if pred_doms else set()
             common |= set([block])
-            if common != dominance[block]:
-                dominance[block] = common
+            if common != dominator[block]:
+                dominator[block] = common
                 dom_changed = True
 
-    json.dump({k: sorted(list(v)) for k, v in dominance.items()},
-              sys.stdout, indent=2, sort_keys=True)
+    # a dominated-by mapping
+    dominator = {k: sorted(list(v)) for k, v in dominator.items()}
+    return dominator
 
-def global_analysis(bril, analysis):
+def global_analysis(bril, output_option='dom'):
     # dominance is a (intraprocedural) global analysis
     for func in bril['functions']:
         blocks, block_map = form_blocks(func)
@@ -103,14 +136,22 @@ def global_analysis(bril, analysis):
                 print(src, "->", dst)
             for dst, src in preds.items():
                 print(src, "<-", dst)
-        analysis(succs, preds, block_map)
-    print("")
+        dom = dom_algorithm(succs, preds, block_map)
+        frontier = dom_frontier(preds, dom)
+        tree = immediate_dominance(dom)
+        if output_option == 'dom':
+            json.dump(dom, sys.stdout, indent=2, sort_keys=True)
+        elif output_option == 'front':
+            json.dump(frontier, sys.stdout, indent=2, sort_keys=True)
+        elif output_option == 'tree':
+            json.dump(tree, sys.stdout, indent=2, sort_keys=True)
+        print("")
 
 if __name__ == '__main__':
-    ANALYSIS = {'dom': dom_algorithm, 'front': hello, 'tree': hello}
+    ANALYSIS = set(['dom', 'front', 'tree'])
     bril = json.load(sys.stdin)
     option = 'dom' if len(sys.argv) < 2 else sys.argv[1]
     if option not in ANALYSIS:
         print('[USAGE]: {} <dom|front|tree>'.format(sys.argv[0]))
         quit()
-    global_analysis(bril, ANALYSIS[option])
+    global_analysis(bril, option)
