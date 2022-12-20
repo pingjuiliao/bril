@@ -7,12 +7,18 @@ import sys
 DEBUG = False
 TERMINATORS = ['br', 'jmp', 'ret']
 
-def form_blocks(func):
+def form_blocks(instrs):
 
+    # Insert 'ret'
+    #last_instr = instrs[-1]
+    #if 'op' not in last_instr or last_instr['op'] not in TERMINATORS:
+    #    instrs.append({'op': 'ret'})
+
+    # form blocks
     block_list = []
     curr_block = []
     block_id = 0
-    for instr in func['instrs']:
+    for instr in instrs:
         if 'op' in instr:
             if not curr_block:
                 block_id += 1
@@ -27,7 +33,7 @@ def form_blocks(func):
                 block_list.append(curr_block)
             curr_block = [instr]
 
-    if len(curr_block) > 1:
+    if curr_block:
         block_list.append(curr_block)
 
     should_insert_entry_block = False
@@ -44,8 +50,17 @@ def form_blocks(func):
                         }]
         block_list = [entry_block] + block_list
 
-    block_map = {block[0]['label']: block for block in block_list}
+    for i, block in enumerate(block_list):
+        if 'op' not in block[-1] or block[-1]['op'] not in TERMINATORS:
+            if i == len(block_list) - 1:
+                block.append({'op': 'ret'})
+            else:
+                next_block = block_list[i+1]
+                block.append({'op': 'jmp',
+                              'labels': [next_block[0]['label']]})
 
+
+    block_map = {block[0]['label']: block for block in block_list}
     return block_list, block_map
 
 def form_cfg(blocks, labels):
@@ -54,18 +69,10 @@ def form_cfg(blocks, labels):
     for i, block in enumerate(blocks):
         label = block[0]['label']
         last_instr = block[-1]
-        if 'op' not in last_instr or \
-           last_instr['op'] not in TERMINATORS:
-            if i + 1 < len(blocks):
-                next_label = blocks[i+1][0]['label']
-                succs[label].append(next_label)
-                preds[next_label].append(label)
-        elif last_instr['op'] in ['jmp', 'br']:
+        if last_instr['op'] in ['jmp', 'br']:
             for dst_label in last_instr['labels']:
                 succs[label].append(dst_label)
                 preds[dst_label].append(label)
-
-        # no need to handle 'ret'
 
     return succs, preds
 
@@ -127,7 +134,7 @@ def dom_algorithm(succs, preds, block_map):
 def global_analysis(bril, output_option='dom'):
     # dominance is a (intraprocedural) global analysis
     for func in bril['functions']:
-        blocks, block_map = form_blocks(func)
+        blocks, block_map = form_blocks(func['instrs'])
         succs, preds = form_cfg(blocks, [k for k in block_map.keys()])
         if DEBUG:
             for k, v in block_map.items():
