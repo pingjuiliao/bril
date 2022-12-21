@@ -27,7 +27,7 @@ def phi_node_insertion(block_map, dom_frontier):
 
     # A variable-to-block-to-phi map
     phi_map = {var: {} for var in def_map.keys()}
-    for variable in def_map.keys():
+    for variable in sorted(def_map.keys()):
         stack = list(def_map[variable]) # can be queue or stack
         while stack:
             def_block = stack.pop()
