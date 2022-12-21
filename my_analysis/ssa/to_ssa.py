@@ -64,17 +64,12 @@ def rename_all(entry_label, block_map, succs, immediate_dominance, func):
 
     # 2) name_map
     name_map = {k: 0 for k in var_stacks.keys()}
+
     if DEBUG:
         print(var_stacks)
+    # 3) rename from entry block
     rename(entry_label, block_map, succs, immediate_dominance)
 
-    for block in block_map.values():
-        for instr in block:
-            if 'new_dest' in instr:
-                instr['dest'] = instr['new_dest']
-                instr.pop('new_dest')
-            if 'op' in instr and instr['op'] == 'new_phi':
-                instr['op'] = 'phi'
 
 def rename(label, block_map, succs, immediates):
     global var_stacks, name_map
@@ -121,6 +116,13 @@ def rename(label, block_map, succs, immediates):
 def to_ssa(entry_lbl, block_map, func, dom_frontier, tree, succs):
     phi_node_insertion(block_map, dom_frontier)
     rename_all(entry_lbl, block_map, succs, tree, func)
+    for block in block_map.values():
+        for instr in block:
+            if 'new_dest' in instr:
+                instr['dest'] = instr['new_dest']
+                instr.pop('new_dest')
+            if 'op' in instr and instr['op'] == 'new_phi':
+                instr['op'] = 'phi'
 
 def reform_blocks(block_list, block_map):
     label_list = [block[0]['label'] for block in block_list]
